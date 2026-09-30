@@ -4,7 +4,7 @@
 
 ![Status](https://img.shields.io/badge/status-em%20constru%C3%A7%C3%A3o-orange)
 ![Java](https://img.shields.io/badge/Java-21-red)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3-brightgreen)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4-brightgreen)
 ![Kafka](https://img.shields.io/badge/Apache%20Kafka-event--driven-black)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
@@ -257,7 +257,7 @@ Endpoints planejados (documentação completa via OpenAPI/Swagger em `/swagger-u
 
 | Camada                    | Tecnologias                                                        |
 | ------------------------- | ------------------------------------------------------------------ |
-| **Linguagem e framework** | Java 21 (Virtual Threads, Records), Spring Boot 3, Spring Modulith |
+| **Linguagem e framework** | Java 21 (Virtual Threads, Records), Spring Boot 4, Spring Modulith |
 | **Segurança**             | Spring Security, OAuth2 Resource Server, Keycloak                  |
 | **Persistência**          | PostgreSQL, Spring Data JPA, Flyway                                |
 | **Cache e idempotência**  | Redis                                                              |
@@ -292,16 +292,18 @@ As decisões ficam registradas em [`docs/adr`](docs/adr), cada uma com contexto,
 
 ```
 zerosum/
+├── pom.xml                        # pom pai (Java 21, Spring Boot 4)
 ├── zerosum-core/                  # monólito modular
-│   └── src/main/java/.../zerosum/
+│   └── src/main/java/io/github/peixotim/zerosum/
 │       ├── payments/
 │       ├── split/
 │       ├── ledger/
 │       ├── settlement/
 │       ├── disputes/
 │       └── shared/
-├── reconciliation-worker/
-├── psp-simulator/
+├── zerosum-contracts/             # records dos eventos Kafka (Fase 3)
+├── reconciliation-worker/         # Fase 5
+├── psp-simulator/                 # Fase 2
 ├── infra/
 │   ├── docker-compose.yml
 │   ├── keycloak/
@@ -368,48 +370,117 @@ curl -X PUT localhost:8090/chaos \
 
 ## 🗺 Roadmap
 
-**Fase 0: Fundação**
+Cada item marcado corresponde a código e testes no repositório. Itens de uma fase só começam quando a fase anterior está completa.
 
-- [ ] Estrutura multi-módulo com Maven
-- [ ] Docker Compose com PostgreSQL, Redis, Kafka e Keycloak
-- [ ] Pipeline de CI no GitHub Actions
-- [ ] ADRs 0001 a 0003
+### Fase 0: Fundação
 
-**Fase 1: Ledger Core**
+- [x] **Estrutura multi-módulo com Maven**
+  - [x] pom pai com Spring Boot 4 e Java 21
+  - [x] módulo `zerosum-core` com WebMVC e Actuator
+  - [x] Maven Wrapper e `.gitignore`
+- [ ] **Docker Compose** (`infra/docker-compose.yml`)
+  - [ ] PostgreSQL 16 com volume e healthcheck
+  - [ ] Redis com healthcheck
+  - [ ] Kafka em modo KRaft (sem ZooKeeper) e healthcheck
+  - [ ] Keycloak com realm importado de `infra/keycloak`
+  - [ ] Variáveis em `.env.example`
+- [ ] **Conexão do core com a infra**
+  - [ ] Flyway com migração `V1` vazia, provando a conexão com o PostgreSQL
+  - [ ] Perfis `local` e `test`
+  - [ ] Teste de integração com Testcontainers (fundação para os testes futuros)
+- [ ] **Pipeline de CI** no GitHub Actions
+  - [ ] Build e testes com Java 21 e cache do Maven
+  - [ ] Badge de status no README
+- [ ] **ADRs 0001 a 0003**, cada um escrito junto da decisão que o motivou
+- [ ] **Qualidade base**: `.editorconfig` e verificação de estrutura de módulos com Spring Modulith
 
-- [ ] Contas, lançamentos e partidas
-- [ ] Validação de soma zero
-- [ ] Cálculo de saldo e extrato
-- [ ] Lock otimista
-- [ ] Testes de propriedade
+### Fase 1: Ledger Core
 
-**Fase 2: Payments e Split**
+- [ ] **Modelo e persistência**
+  - [ ] Tabelas `account`, `journal_entry` e `posting` via Flyway
+  - [ ] Constraint no banco impedindo `UPDATE` e `DELETE` nos lançamentos (RD-02)
+  - [ ] Tipo `Money` em centavos, sem `double` (RD-03)
+- [ ] **Registro de lançamentos**
+  - [ ] Validação de soma zero (RD-01)
+  - [ ] Idempotência do lançamento por chave única
+  - [ ] Único ponto de escrita: pacote `ledger`, protegido por ArchUnit
+- [ ] **Saldo e extrato**
+  - [ ] Saldo derivado dos lançamentos, nunca armazenado
+  - [ ] Extrato paginado por cursor
+- [ ] **Concorrência**
+  - [ ] Lock otimista por `version` na conta (RD-08 e F-08)
+  - [ ] Teste com duas threads concorrentes na mesma conta
+- [ ] **Testes de propriedade (jqwik)**: qualquer sequência de lançamentos mantém soma global zero
 
-- [ ] Criação de cobranças com idempotência
-- [ ] Máquina de estados
-- [ ] Split Engine com maior resto
-- [ ] psp-simulator básico
+### Fase 2: Payments e Split
 
-**Fase 3: Mensageria**
+- [ ] **Split Engine**
+  - [ ] Modelo de regras: percentual, valor fixo e combinação (RD-05)
+  - [ ] Arredondamento por maior resto (RD-04)
+  - [ ] Teste de propriedade: soma das partes sempre igual ao total
+- [ ] **Payments**
+  - [ ] `POST /v1/charges` com `Idempotency-Key` em Redis e constraint única no PostgreSQL (RD-09, F-01)
+  - [ ] Máquina de estados da cobrança com transições inválidas rejeitadas (RD-10)
+  - [ ] `GET /v1/charges/{id}` com o split calculado
+- [ ] **psp-simulator** (novo módulo Maven)
+  - [ ] Cria cobrança Pix e devolve QR Code fake
+  - [ ] Envia webhook de pagamento
+- [ ] **Webhook do PSP**
+  - [ ] `POST /v1/webhooks/psp` com deduplicação (F-02)
+  - [ ] Confirmação gera split e lançamento no ledger
+- [ ] **OpenAPI/Swagger** dos endpoints existentes
 
-- [ ] Transactional Outbox
-- [ ] Consumidores idempotentes
-- [ ] Dead letter topics
-- [ ] Modo caos no simulador
+### Fase 3: Mensageria
 
-**Fase 4: Settlement e Disputes**
+- [ ] **Contratos**: módulo `zerosum-contracts` com os records dos eventos
+- [ ] **Transactional Outbox**
+  - [ ] Tabela `outbox` gravada na mesma transação do ledger
+  - [ ] Relay publicando no Kafka com retry (F-06)
+  - [ ] Métrica do tamanho da fila do outbox
+- [ ] **Consumidores idempotentes**
+  - [ ] Tabela de mensagens processadas (F-07)
+  - [ ] Split Engine consumindo `payments.charge-confirmed`
+- [ ] **Falhas**
+  - [ ] Retry com backoff e tópicos `*.dlt`
+  - [ ] Ferramenta simples para reprocessar mensagens do DLT
+- [ ] **Modo caos no simulador**
+  - [ ] Duplicar, atrasar, reordenar e omitir webhooks (F-03)
+  - [ ] Endpoint `PUT /chaos` para configurar as taxas
+  - [ ] Job de verificação ativa quando o webhook não chega (F-04)
+  - [ ] Circuit breaker com Resilience4j (F-10)
 
-- [ ] Agenda D+N e reserva de risco
-- [ ] Payouts
-- [ ] Saga de estorno e chargeback
-- [ ] Saldo negativo e compensação
+### Fase 4: Settlement e Disputes
 
-**Fase 5: Conciliação, segurança e produção**
+- [ ] **Settlement**
+  - [ ] Agenda de liquidação D+N por marketplace (RD-06)
+  - [ ] Reserva de risco e sua liberação (RD-07)
+  - [ ] `GET /v1/sellers/{id}/balance` com disponível, pendente e reservado
+- [ ] **Payouts**
+  - [ ] `POST /v1/sellers/{id}/payouts` com lock otimista contra saque acima do saldo (F-08)
+  - [ ] Ciclo `payout-requested` → `payout-completed`
+- [ ] **Disputes**
+  - [ ] Estorno total e parcial (`POST /v1/charges/{id}/refunds`)
+  - [ ] Saga de chargeback com lançamentos de reversão (RD-02)
+  - [ ] Saldo negativo e compensação automática em vendas futuras (RD-08, F-05)
+- [ ] **Suíte de caos** rodando o fluxo completo e verificando a integridade do ledger
 
-- [ ] reconciliation-worker
-- [ ] OAuth2 com Keycloak e webhooks com HMAC
-- [ ] Observabilidade completa
-- [ ] Testes de carga com k6 e resultados publicados
+### Fase 5: Conciliação, segurança e produção
+
+- [ ] **reconciliation-worker** (novo módulo Maven)
+  - [ ] Extrato diário do PSP comparado ao ledger
+  - [ ] Evento `reconciliation.divergence-detected` (F-09)
+- [ ] **Segurança**
+  - [ ] OAuth2 Resource Server com Keycloak e escopos por rota
+  - [ ] Webhooks assinados com HMAC
+  - [ ] Rate limit por marketplace
+- [ ] **Observabilidade**
+  - [ ] Traces com OpenTelemetry e Tempo
+  - [ ] Métricas de negócio no Prometheus e dashboards no Grafana
+  - [ ] Logs JSON com `traceId` no Loki
+- [ ] **Carga**
+  - [ ] Cenários k6 (criação de cobrança, webhooks, saldo)
+  - [ ] Resultados publicados com ambiente e parâmetros
+- [ ] **Documentação final**: diagramas C4, runbooks e ADRs 0004 a 0008
 
 ---
 
